@@ -129,25 +129,67 @@ list of lines as strings."
   (nth (+ (random *number-of-situation-objects* (make-random-state t)) 1) *input*))
 
 ;; Definition of game parameters
-(defparameter *number-of-objects-per-game* 5)
+(defparameter *number-of-objects-per-scene* 5)
+(defparameter *total-number-of-games* 500)
+(defparameter *game-channels* '("x" "y" "width" "height" "v-avg" "u-avg" "y-avg"))
 
 ;; Function that allows to get a random set of objects to make a game
-(defun get-random-game-objects()
+(defun get-random-scene-objects()
   "Gets a random set of situational objects to execute a game based on it"
   (let ((result '()))
-  (loop for i from 1 to *number-of-objects-per-game* do
+  (loop for i from 1 to *number-of-objects-per-scene* do
        (setq obj (get-random-situation-object))
        (if(eq (member obj result) nil)
           (setq result (append result (list obj))))
        )
   result))
 
-(get-random-game-objects)
+;; Definition of the structure for a scene
+(defstruct scene
+  (objects)
+  (topic))
+
+;; Definition of the structure for the data contained in the tree nodes
+(defstruct node-data
+  (score)
+  (game-number))
+
+;; Definition of the binary-tree node structure
+(defstruct binary-tree-node
+  (data)
+  (left-child)
+  (right-child))
+
+;; Definition of the structure for the sensory channels
+(defstruct sensory-channel
+  (feature-name)
+  (lower-bound)
+  (upper-bound)
+  (discrimination-tree))
 
 ;; Definition of the main agent structure
 (defstruct agent
   (feature-detectors))
 
+
+
+;; Function to create a scene using the random objects. The topic is removed from the
+;; list of objects in the scene to avoid redundant comparisons.
+(defun create-scene()
+  "creates a scene for the game"
+  (let
+      ((objs (get-random-scene-objects)))
+    (setq tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs))
+    (setq scene (make-scene :objects (remove tpc objs) :topic tpc))
+    scene
+    ))
+
+;; Function to run a single discrimination game
+(defun run-single-game()
+  (let ((scene (create-scene)))
+    ))
+
 ;; Definition of the game. Main function to run.
-
-
+(defun exec-game()
+  (loop for i from 0 to *total-number-of-games* do
+       ()))
