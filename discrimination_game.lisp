@@ -140,7 +140,8 @@ list of lines as strings."
   (loop for i from 1 to *number-of-objects-per-scene* do
        (setq obj (get-random-situation-object))
        (if(eq (member obj result) nil)
-          (setq result (append result (list obj))))
+          (setq result (append result (list obj)))
+          (setq i (- i 1))) 
        )
   result))
 
@@ -167,11 +168,20 @@ list of lines as strings."
   (upper-bound)
   (discrimination-tree))
 
+;; Function to get the root of a tree
+(defun get-root()
+  (make-binary-tree-node :data (make-node-data :score 0.0 :game-number 0)))
+
+;; Function to initialize the sensory channels for the agent
+(defun init-sensory-channels()
+  (let ((channels '()))
+    (loop for c in *game-channels* do
+         (setq channels (append channels (list (make-sensory-channel :feature-name c :lower-bound 0.0 :upper-bound 1.0 :discrimination-tree (get-root))))))
+    channels))
+
 ;; Definition of the main agent structure
 (defstruct agent
-  (feature-detectors))
-
-
+  (feature-detectors (init-sensory-channels)))
 
 ;; Function to create a scene using the random objects. The topic is removed from the
 ;; list of objects in the scene to avoid redundant comparisons.
