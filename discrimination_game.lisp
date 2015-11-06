@@ -206,20 +206,40 @@ list of lines as strings."
   (feature-name)
   (discrimination-node))
 
-;; Function in charge of expand (bifurcate) a node creating new children for it
-(defun expand-node (node)
-  (setq ))
-
-(defun sensory-channel-discriminate (sensory-channel object topic)
-  ())
-
+;; Gets the lower bound of a node, basic wrapper for slot accessor
 (defun get-lower-bound(node)
   "Given a node gets its lower bound contained in its data"
   (node-data-lower-bound (tree-node-data node)))
 
+;; Gets the upper bound of a node, basic wrapper for slot accessor
 (defun get-upper-bound(node)
   "Given a node gets its upper bound contained in its data"
   (node-data-upper-bound (tree-node-data node)))
+
+;; Function in charge of expand (bifurcate) a node creating new children for it
+(defun expand-node (node)
+  (format t "Start. node lb: ~d node ub: ~d ~C" (get-lower-bound node) (get-upper-bound node) #\linefeed)
+  (setf (tree-node-left-child node) (make-tree-node :data (make-node-data :lower-bound (get-lower-bound node) :upper-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0))))
+  (format t "1. node lb: ~d node ub: ~d ~C" (get-lower-bound (tree-node-left-child node)) (get-upper-bound (tree-node-left-child node)) #\linefeed)
+  (setf (tree-node-right-child node) (make-tree-node :data (make-node-data :lower-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0) :upper-bound (get-upper-bound node))))
+  (format t "2. node lb: ~d node ub: ~d ~C" (get-lower-bound node) (get-upper-bound node) #\linefeed)
+  node)
+
+
+(expand-node (make-tree-node :data (make-node-data :lower-bound 0.5 :upper-bound 1.0)))
+
+(defun hi()
+  (let ((a 0.5))
+    (/ a 2.0)))
+
+(hi)
+
+(/ 0.5 2)
+
+(expand-node (get-root))
+
+(defun sensory-channel-discriminate (sensory-channel object topic)
+  ())
 
 (defun hello(node object-value topic-value)
   (let ((low-b (get-lower-bound node)) (up-b (get-upper-bound node)))
@@ -237,19 +257,19 @@ list of lines as strings."
       (return-from hello (hello (tree-node-right-child node) object-value topic-value))))
   res)
 
-(and (<= 0.0 0.7) (>= 1.0 0.7) (or (> 0.0 0.4) (< 1.0 0.4)))
-
 (defun test-sub-node(lb ub)
-  (make-tree-node :data (make-node-data :lower-bound lb :upper-bound ub)))
+  (let((res (make-tree-node :data (make-node-data :lower-bound lb :upper-bound ub))))
+    (setf res (expand-node res))
+    res))
+
+(expand-node (make-tree-node :data (make-node-data :lower-bound 0.5 :upper-bound 1.0)))
 
 (defun test-node()
   (make-tree-node :data (make-node-data :lower-bound 0.0 :upper-bound 1.0) :left-child (test-sub-node 0.0 0.5) :right-child (test-sub-node 0.5 1.0)))
 
 (get-lower-bound (test-node))
 
-(hello (test-node) 0.4 0.7)
-
-(format t "Hello world.~C" #\linefeed)
+(hello (test-node) 0.78 0.6)
 
 (defun agent-discriminate (agent object topic)
   (loop for fd in (agent-feature-detectors agent) do 
