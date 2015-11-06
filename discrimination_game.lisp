@@ -103,6 +103,13 @@ the real numbers corresponding to the string values"
   (min-v)
   (max-v))
 
+;; Call the accessor function of the inpu-object structure based on a string
+(defun get-input-object-value (input-object slot-name)
+  "Given a string for the slot name gets the value using the accessor function 
+of the structure for the given input object"
+  (funcall (symbol-function (find-symbol (string-upcase (concatenate 'string "input-object-" slot-name)))) input-object))
+
+
 ;; Gets a list with the contents of the object and returns an input-object based on it.
 (defun input-object-from-list(list-args)
   (setq input-obj (make-input-object  :x (nth 0 list-args) :y (nth 1 list-args) :z (nth 2 list-args) :width (nth 3 list-args) :height (nth 4 list-args) :avg-y (nth 5 list-args) :avg-u (nth 6 list-args) :avg-v (nth 7 list-args) :min-y (nth 8 list-args) :min-u (nth 9 list-args) :min-v (nth 10 list-args) :max-y (nth 11 list-args) :max-u (nth 12 list-args) :max-v (nth 13 list-args) :stdv-y (nth 14 list-args) :stdv-u (nth 15 list-args) :stdv-v (nth 16 list-args)))
@@ -153,30 +160,31 @@ list of lines as strings."
 ;; Definition of the structure for the data contained in the tree nodes
 (defstruct node-data
   (score)
-  (game-number))
+  (game-number)
+  (lower-bound)
+  (upper-bound))
 
 ;; Definition of the binary-tree node structure
-(defstruct binary-tree-node
+(defstruct tree-node
   (data)
+  (parent)
   (left-child)
   (right-child))
 
 ;; Definition of the structure for the sensory channels
 (defstruct sensory-channel
   (feature-name)
-  (lower-bound)
-  (upper-bound)
   (discrimination-tree))
 
 ;; Function to get the root of a tree
 (defun get-root()
-  (make-binary-tree-node :data (make-node-data :score 0.0 :game-number 0)))
+  (make-tree-node :data (make-node-data :score 0.0 :game-number 0 :lower-bound 0.0 :upper-bound 1.0)))
 
 ;; Function to initialize the sensory channels for the agent
 (defun init-sensory-channels()
   (let ((channels '()))
     (loop for c in *game-channels* do
-         (setq channels (append channels (list (make-sensory-channel :feature-name c :lower-bound 0.0 :upper-bound 1.0 :discrimination-tree (get-root))))))
+         (setq channels (append channels (list (make-sensory-channel :feature-name c :discrimination-tree (get-root))))))
     channels))
 
 ;; Definition of the main agent structure
@@ -187,19 +195,80 @@ list of lines as strings."
 ;; list of objects in the scene to avoid redundant comparisons.
 (defun create-scene()
   "creates a scene for the game"
-  (let
-      ((objs (get-random-scene-objects)))
+  (let ((objs (get-random-scene-objects)))
     (setq tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs))
     (setq scene (make-scene :objects (remove tpc objs) :topic tpc))
     scene
     ))
 
+(defstruct discrimination-result
+  (successful)
+  (feature-name)
+  (discrimination-node))
+
+;; Function in charge of expand (bifurcate) a node creating new children for it
+(defun expand-node (node)
+  (setq ))
+
+(defun sensory-channel-discriminate (sensory-channel object topic)
+  ())
+
+(defun get-lower-bound(node)
+  "Given a node gets its lower bound contained in its data"
+  (node-data-lower-bound (tree-node-data node)))
+
+(defun get-upper-bound(node)
+  "Given a node gets its upper bound contained in its data"
+  (node-data-upper-bound (tree-node-data node)))
+
+(defun hello(node object-value topic-value)
+  (let ((low-b (get-lower-bound node)) (up-b (get-upper-bound node)))
+    (format t "lb: ~d ub: ~d tv: ~d ov: ~d ~C" low-b up-b topic-value object-value #\linefeed)
+    (when (and (<= low-b topic-value) 
+               (>= up-b topic-value) 
+               (or (> low-b object-value) (< up-b object-value)))
+      (return-from hello (make-discrimination-result :successful t :discrimination-node node)))
+    (setq res nil)
+    (when (not (eq (tree-node-left-child node) nil))
+      (setq res (hello (tree-node-left-child node) object-value topic-value)))
+    (when (not (eq res nil))
+      (return-from hello res))
+    (when (not (eq (tree-node-right-child node) nil))
+      (return-from hello (hello (tree-node-right-child node) object-value topic-value))))
+  res)
+
+(and (<= 0.0 0.7) (>= 1.0 0.7) (or (> 0.0 0.4) (< 1.0 0.4)))
+
+(defun test-sub-node(lb ub)
+  (make-tree-node :data (make-node-data :lower-bound lb :upper-bound ub)))
+
+(defun test-node()
+  (make-tree-node :data (make-node-data :lower-bound 0.0 :upper-bound 1.0) :left-child (test-sub-node 0.0 0.5) :right-child (test-sub-node 0.5 1.0)))
+
+(get-lower-bound (test-node))
+
+(hello (test-node) 0.4 0.7)
+
+(format t "Hello world.~C" #\linefeed)
+
+(defun agent-discriminate (agent object topic)
+  (loop for fd in (agent-feature-detectors agent) do 
+       (sensory-channel-discriminate fd object topic)))
+
+;; Function in charge of making a discrimination between the objects of a scene
+;; using the feature detectors of the agent
+(defun run-discrimination(agent scene)
+  (loop for obj in (scene-objects scene) do
+       (agent-discriminate agent object (scene-topic scene))))
+
+;; ****** Add saliency and context-scaling
 ;; Function to run a single discrimination game
-(defun run-single-game()
+(defun run-single-game(agent)
   (let ((scene (create-scene)))
-    ))
+    (setq discrimination-results (run-discrimination agent scene))))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
-  (loop for i from 0 to *total-number-of-games* do
-       ()))
+  (let ((agent (make-agent)))
+    (loop for i from 0 to *total-number-of-games* do
+         ())))
