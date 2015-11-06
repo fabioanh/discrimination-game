@@ -180,6 +180,13 @@ list of lines as strings."
 (defun get-root()
   (make-tree-node :data (make-node-data :score 0.0 :game-number 0 :lower-bound 0.0 :upper-bound 1.0)))
 
+
+;; Gets the root of the tree for the current node based on its ancestors
+(defun find-root(node)
+  (if(eq (tree-node-parent node) nil)
+     node
+  (find-root (tree-node-parent node))))
+
 ;; Function to initialize the sensory channels for the agent
 (defun init-sensory-channels()
   (let ((channels '()))
@@ -223,6 +230,44 @@ list of lines as strings."
   (setf (tree-node-left-child node) (make-tree-node :data (make-node-data :lower-bound (get-lower-bound node) :upper-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0))))
   (setf (tree-node-right-child node) (make-tree-node :data (make-node-data :lower-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0) :upper-bound (get-upper-bound node))))
   node)
+
+(find-root (expand-node (get-root)))
+
+;; Function to get a random child 
+(defun random-child (node)
+  (if(eq (random 2 (make-random-state t)) 0)
+     (tree-node-left-child node)
+     (tree-node-right-child node)))
+
+(randomize-node (expand-node (get-root)))
+
+;; Helper for random-expand, in charge of expanding a random leaf
+(defun random-expand-helper(node)
+  "Expands a random leaf in a given tree"
+  (if(and (not (eq (tree-node-left-child node) nil)) (not (eq (tree-node-right-child node) nil)))
+     (random-expand-helper (random-child node))
+     (expand-node node)))
+
+;; Randomly expands a leaf in a tree
+(defun random-expand (node)
+  "Expands a random leaf in a tree and returns the modified structure"
+  (random-expand-helper node)
+  node)
+
+(random-expand(random-expand(random-expand(get-root))))
+
+(and (not (eq (tree-node-left-child (get-root)) nil))) (not (eq (tree-node-right-child (get-root)) nil))
+
+
+(defun test(node)
+  (expand-node node))
+
+(defun test-test()
+  (let ((node (get-root)))
+    (test node)
+    node))
+
+(test-test)
 
 ;; Function in charge of discriminate a value inside a node (tree representation)
 (defun discriminate-values(node topic-value object-value)
@@ -269,7 +314,8 @@ list of lines as strings."
 ;; Function to run a single discrimination game
 (defun run-single-game(agent)
   (let ((scene (create-scene)))
-    (setq discrimination-results (run-discrimination agent scene))))
+    (setq discrimination-results (run-discrimination agent scene))
+    ))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
