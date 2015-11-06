@@ -201,6 +201,7 @@ list of lines as strings."
     scene
     ))
 
+;; Structure to represent the result of a discrimination
 (defstruct discrimination-result
   (successful)
   (feature-name)
@@ -218,43 +219,27 @@ list of lines as strings."
 
 ;; Function in charge of expand (bifurcate) a node creating new children for it
 (defun expand-node (node)
-  (format t "Start. node lb: ~d node ub: ~d ~C" (get-lower-bound node) (get-upper-bound node) #\linefeed)
+  "Expands a node's children dividing its interval in two"
   (setf (tree-node-left-child node) (make-tree-node :data (make-node-data :lower-bound (get-lower-bound node) :upper-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0))))
-  (format t "1. node lb: ~d node ub: ~d ~C" (get-lower-bound (tree-node-left-child node)) (get-upper-bound (tree-node-left-child node)) #\linefeed)
   (setf (tree-node-right-child node) (make-tree-node :data (make-node-data :lower-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0) :upper-bound (get-upper-bound node))))
-  (format t "2. node lb: ~d node ub: ~d ~C" (get-lower-bound node) (get-upper-bound node) #\linefeed)
   node)
 
-
-(expand-node (make-tree-node :data (make-node-data :lower-bound 0.5 :upper-bound 1.0)))
-
-(defun hi()
-  (let ((a 0.5))
-    (/ a 2.0)))
-
-(hi)
-
-(/ 0.5 2)
-
-(expand-node (get-root))
-
-(defun sensory-channel-discriminate (sensory-channel object topic)
-  ())
-
-(defun hello(node object-value topic-value)
+;; Function in charge of discriminate a value inside a node (tree representation)
+(defun discriminate-values(node topic-value object-value)
+  "Discriminates the topic-value from the object-value using the node/tree provided as parameter"
   (let ((low-b (get-lower-bound node)) (up-b (get-upper-bound node)))
     (format t "lb: ~d ub: ~d tv: ~d ov: ~d ~C" low-b up-b topic-value object-value #\linefeed)
     (when (and (<= low-b topic-value) 
                (>= up-b topic-value) 
                (or (> low-b object-value) (< up-b object-value)))
-      (return-from hello (make-discrimination-result :successful t :discrimination-node node)))
+      (return-from discriminate-values (make-discrimination-result :successful t :discrimination-node node)))
     (setq res nil)
     (when (not (eq (tree-node-left-child node) nil))
-      (setq res (hello (tree-node-left-child node) object-value topic-value)))
+      (setq res (discriminate-values (tree-node-left-child node) object-value topic-value)))
     (when (not (eq res nil))
-      (return-from hello res))
+      (return-from discriminate-values res))
     (when (not (eq (tree-node-right-child node) nil))
-      (return-from hello (hello (tree-node-right-child node) object-value topic-value))))
+      (setq res (discriminate-values (tree-node-right-child node) object-value topic-value))))
   res)
 
 (defun test-sub-node(lb ub)
@@ -262,24 +247,23 @@ list of lines as strings."
     (setf res (expand-node res))
     res))
 
-(expand-node (make-tree-node :data (make-node-data :lower-bound 0.5 :upper-bound 1.0)))
-
 (defun test-node()
   (make-tree-node :data (make-node-data :lower-bound 0.0 :upper-bound 1.0) :left-child (test-sub-node 0.0 0.5) :right-child (test-sub-node 0.5 1.0)))
 
-(get-lower-bound (test-node))
 
-(hello (test-node) 0.78 0.6)
-
-(defun agent-discriminate (agent object topic)
+(defun agent-discriminate (agent topic object)
   (loop for fd in (agent-feature-detectors agent) do 
-       (sensory-channel-discriminate fd object topic)))
+       (discriminate-values (sensory-channel-discrimination-tree fd) topic object)))
 
 ;; Function in charge of making a discrimination between the objects of a scene
 ;; using the feature detectors of the agent
 (defun run-discrimination(agent scene)
-  (loop for obj in (scene-objects scene) do
-       (agent-discriminate agent object (scene-topic scene))))
+  (let ((res '()))
+    (loop for obj in (scene-objects scene) do
+         (progn 
+           (setq disc (agent-discriminate agent (scene-topic scene) object))
+           (when (not (eq disc nil))
+             (setq res (append res (list disc))))))))
 
 ;; ****** Add saliency and context-scaling
 ;; Function to run a single discrimination game
