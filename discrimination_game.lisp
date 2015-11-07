@@ -26,7 +26,7 @@ this function; :from-end values of NIL and T are equivalent unless
 argument to CL:SUBSEQ into the sequence indicating where processing
 stopped."
     (check-bounds sequence start end)
-  (cond
+    (cond
     ((and (not from-end) (null test-not))
      (split-from-start (lambda (sequence start)
                          (position delimiter sequence :start start :key key :test test))
@@ -44,7 +44,7 @@ stopped."
                        (position delimiter sequence :end end :from-end t :key key :test-not test-not))
                      sequence start end count remove-empty-subseqs))))
   (defun split-from-start (position-fn sequence start end count remove-empty-subseqs)
-  (let ((length (length sequence)))
+    (let ((length (length sequence)))
     (loop
        :for left := start :then (+ right 1)
        :for right := (min (or (funcall position-fn sequence left) length)
@@ -58,7 +58,22 @@ stopped."
        :collect (subseq sequence left right) :into subseqs
        :and :sum 1 :into nr-elts
        :until (>= right end)
-       :finally (return (values subseqs right))))))
+       :finally (return (values subseqs right)))))
+  (defun split-from-end (position-fn sequence start end count remove-empty-subseqs)
+  (loop
+     :for right := end :then left
+     :for left := (max (or (funcall position-fn sequence right) -1)
+                       (1- start))
+     :unless (and (= right (1+ left))
+                  remove-empty-subseqs) ; empty subseq we don't want
+     :if (and count (>= nr-elts count))
+     ;; We can't take any more. Return now.
+     :return (values (nreverse subseqs) right)
+     :else
+     :collect (subseq sequence (1+ left) right) into subseqs
+     :and :sum 1 :into nr-elts
+     :until (< left start)
+     :finally (return (values (nreverse subseqs) (1+ left))))))
 
 ;; Function used to replace values on string
 (defun replace-all (string part replacement &key (test #'char=))
@@ -109,11 +124,10 @@ the real numbers corresponding to the string values"
 of the structure for the given input object"
   (funcall (symbol-function (find-symbol (string-upcase (concatenate 'string "input-object-" slot-name)))) input-object))
 
-
 ;; Gets a list with the contents of the object and returns an input-object based on it.
 (defun input-object-from-list(list-args)
-  (setq input-obj (make-input-object  :x (nth 0 list-args) :y (nth 1 list-args) :z (nth 2 list-args) :width (nth 3 list-args) :height (nth 4 list-args) :avg-y (nth 5 list-args) :avg-u (nth 6 list-args) :avg-v (nth 7 list-args) :min-y (nth 8 list-args) :min-u (nth 9 list-args) :min-v (nth 10 list-args) :max-y (nth 11 list-args) :max-u (nth 12 list-args) :max-v (nth 13 list-args) :stdv-y (nth 14 list-args) :stdv-u (nth 15 list-args) :stdv-v (nth 16 list-args)))
-  input-obj)
+  (let ((input-obj (make-input-object  :x (nth 0 list-args) :y (nth 1 list-args) :z (nth 2 list-args) :width (nth 3 list-args) :height (nth 4 list-args) :avg-y (nth 5 list-args) :avg-u (nth 6 list-args) :avg-v (nth 7 list-args) :min-y (nth 8 list-args) :min-u (nth 9 list-args) :min-v (nth 10 list-args) :max-y (nth 11 list-args) :max-u (nth 12 list-args) :max-v (nth 13 list-args) :stdv-y (nth 14 list-args) :stdv-u (nth 15 list-args) :stdv-v (nth 16 list-args))))
+  input-obj))
 
 ;; Definition of function to load situation data
 (defun read-file (filename)
@@ -137,19 +151,20 @@ list of lines as strings."
 
 ;; Definition of game parameters
 (defparameter *number-of-objects-per-scene* 5)
-(defparameter *total-number-of-games* 500)
-(defparameter *game-channels* '("x" "y" "width" "height" "v-avg" "u-avg" "y-avg"))
+(defparameter *total-number-of-games* 10)
+(defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "stdv-y" "min-y" "max-y" "avg-u" "stdv-u" "min-u" "max-u" "avg-v" "stdv-v" "min-v" "max-v"))
+(defparameter *current-game* 0)
 
 ;; Function that allows to get a random set of objects to make a game
 (defun get-random-scene-objects()
   "Gets a random set of situational objects to execute a game based on it"
   (let ((result '()))
-  (loop for i from 1 to *number-of-objects-per-scene* do
-       (setq obj (get-random-situation-object))
-       (if(eq (member obj result) nil)
+    (loop for i from 1 to *number-of-objects-per-scene* do
+       (let ((obj (get-random-situation-object)))
+         (if(eq (member obj result) nil)
           (setq result (append result (list obj)))
           (setq i (- i 1))) 
-       )
+       ))
   result))
 
 ;; Definition of the structure for a scene
@@ -159,7 +174,7 @@ list of lines as strings."
 
 ;; Definition of the structure for the data contained in the tree nodes
 (defstruct node-data
-  (score)
+  (score 0)
   (game-number)
   (lower-bound)
   (upper-bound))
@@ -175,6 +190,16 @@ list of lines as strings."
 (defstruct sensory-channel
   (feature-name)
   (discrimination-tree))
+
+;; Definition of the main agent structure
+(defstruct agent
+  (feature-detectors (init-sensory-channels)))
+
+;; Structure to represent the result of a discrimination
+(defstruct discrimination-result
+  (successful)
+  (feature-name)
+  (discrimination-node))
 
 ;; Function to get the root of a tree
 (defun get-root()
@@ -194,25 +219,13 @@ list of lines as strings."
          (setq channels (append channels (list (make-sensory-channel :feature-name c :discrimination-tree (get-root))))))
     channels))
 
-;; Definition of the main agent structure
-(defstruct agent
-  (feature-detectors (init-sensory-channels)))
-
 ;; Function to create a scene using the random objects. The topic is removed from the
 ;; list of objects in the scene to avoid redundant comparisons.
 (defun create-scene()
   "creates a scene for the game"
-  (let ((objs (get-random-scene-objects)))
-    (setq tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs))
-    (setq scene (make-scene :objects (remove tpc objs) :topic tpc))
+  (let* ((objs (get-random-scene-objects)) (tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs)) (scene (make-scene :objects (remove tpc objs) :topic tpc)))
     scene
     ))
-
-;; Structure to represent the result of a discrimination
-(defstruct discrimination-result
-  (successful)
-  (feature-name)
-  (discrimination-node))
 
 ;; Gets the lower bound of a node, basic wrapper for slot accessor
 (defun get-lower-bound(node)
@@ -231,15 +244,11 @@ list of lines as strings."
   (setf (tree-node-right-child node) (make-tree-node :data (make-node-data :lower-bound (/ (+ (get-lower-bound node) (get-upper-bound node)) 2.0) :upper-bound (get-upper-bound node))))
   node)
 
-(find-root (expand-node (get-root)))
-
 ;; Function to get a random child 
 (defun random-child (node)
   (if(eq (random 2 (make-random-state t)) 0)
      (tree-node-left-child node)
      (tree-node-right-child node)))
-
-(randomize-node (expand-node (get-root)))
 
 ;; Helper for random-expand, in charge of expanding a random leaf
 (defun random-expand-helper(node)
@@ -254,30 +263,26 @@ list of lines as strings."
   (random-expand-helper node)
   node)
 
-(random-expand(random-expand(random-expand(get-root))))
-
-(and (not (eq (tree-node-left-child (get-root)) nil))) (not (eq (tree-node-right-child (get-root)) nil))
-
-
-(defun test(node)
-  (expand-node node))
-
-(defun test-test()
-  (let ((node (get-root)))
-    (test node)
-    node))
-
-(test-test)
+;; Function to choose a random channel and call the method in charge of node expansion
+(defun expand-channel (channels)
+  "Selects a random channel and calls the node expansion function.
+If a channel has not been initialized (expanded for the first time) priority is given to it"
+  (loop for c in channels do
+       (let ((dt (sensory-channel-discrimination-tree c)))
+         (print "hello")
+         (when(and (eq (tree-node-left-child dt) nil) (eq (tree-node-right-child dt) nil))
+           (return-from expand-channel (random-expand dt)))))
+  (random-expand (nth (random (length channels) (make-random-state t)) channels)))
 
 ;; Function in charge of discriminate a value inside a node (tree representation)
-(defun discriminate-values(node topic-value object-value)
+(defun discriminate-values(node topic-value object-value feature-name)
   "Discriminates the topic-value from the object-value using the node/tree provided as parameter"
   (let ((low-b (get-lower-bound node)) (up-b (get-upper-bound node)))
     (format t "lb: ~d ub: ~d tv: ~d ov: ~d ~C" low-b up-b topic-value object-value #\linefeed)
     (when (and (<= low-b topic-value) 
                (>= up-b topic-value) 
                (or (> low-b object-value) (< up-b object-value)))
-      (return-from discriminate-values (make-discrimination-result :successful t :discrimination-node node)))
+      (return-from discriminate-values (make-discrimination-result :successful t :discrimination-node node :feature-name feature-name)))
     (setq res nil)
     (when (not (eq (tree-node-left-child node) nil))
       (setq res (discriminate-values (tree-node-left-child node) object-value topic-value)))
@@ -287,38 +292,44 @@ list of lines as strings."
       (setq res (discriminate-values (tree-node-right-child node) object-value topic-value))))
   res)
 
-(defun test-sub-node(lb ub)
-  (let((res (make-tree-node :data (make-node-data :lower-bound lb :upper-bound ub))))
-    (setf res (expand-node res))
-    res))
-
-(defun test-node()
-  (make-tree-node :data (make-node-data :lower-bound 0.0 :upper-bound 1.0) :left-child (test-sub-node 0.0 0.5) :right-child (test-sub-node 0.5 1.0)))
-
-
+;; loops over the feature detectors (channels) of the agent
+;; to try to discriminate the two objects in each of them
 (defun agent-discriminate (agent topic object)
+  "Discrimination attempt on all the feature detectors of the given agent"
   (loop for fd in (agent-feature-detectors agent) do 
-       (discriminate-values (sensory-channel-discrimination-tree fd) topic object)))
+       (discriminate-values (sensory-channel-discrimination-tree fd) topic object (sensory-channel-feature-name fd))))
 
 ;; Function in charge of making a discrimination between the objects of a scene
 ;; using the feature detectors of the agent
 (defun run-discrimination(agent scene)
   (let ((res '()))
     (loop for obj in (scene-objects scene) do
-         (progn 
-           (setq disc (agent-discriminate agent (scene-topic scene) object))
-           (when (not (eq disc nil))
-             (setq res (append res (list disc))))))))
+         (loop for gc in *game-channels* do
+              (let ((disc (agent-discriminate agent (get-input-object-value (scene-topic scene) gc) (get-input-object-value obj gc))))
+                (when (not (eq disc nil))
+                  (setq res (append res (list disc)))))))
+    res))
+
+(defun reward-discrimination-trees(trees)
+  (let ((tr (nth (random (length trees) (make-random-state t)) trees)))
+    (loop for tree in trees do
+         (when(> (node-data-score (tree-node-data tree)) (node-data-score (tree-node-data tr)))
+           (setq tr tree)))
+    (setf (node-data-score (tree-node-data tree)) (+ (node-data-score (tree-node-data tree)) 1))
+    (setf (node-data-game-number (tree-node-data tree)) *current-game*)))
 
 ;; ****** Add saliency and context-scaling
 ;; Function to run a single discrimination game
 (defun run-single-game(agent)
-  (let ((scene (create-scene)))
-    (setq discrimination-results (run-discrimination agent scene))
-    ))
+  (let* ((scene (create-scene)) (discrimination-results (run-discrimination agent scene)))
+    ((if (eq discrimination-results nil)
+         (expand-channel (agent-feature-detectors agent))
+         (reward-discrimination-trees discrimination-results))))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
   (let ((agent (make-agent)))
     (loop for i from 0 to *total-number-of-games* do
-         ())))
+         (run-single-game agent))))
+
+(exec-game)
