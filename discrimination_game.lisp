@@ -154,6 +154,7 @@ list of lines as strings."
 (defparameter *total-number-of-games* 10)
 (defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "stdv-y" "min-y" "max-y" "avg-u" "stdv-u" "min-u" "max-u" "avg-v" "stdv-v" "min-v" "max-v"))
 (defparameter *current-game* 0)
+(defparameter *saliency-treshold* 0.0)
 
 ;; Function that allows to get a random set of objects to make a game
 (defun get-random-scene-objects()
@@ -294,22 +295,23 @@ If a channel has not been initialized (expanded for the first time) priority is 
 
 ;; loops over the feature detectors (channels) of the agent
 ;; to try to discriminate the two objects in each of them
-(defun agent-discriminate (agent topic object)
-  "Discrimination attempt on all the feature detectors of the given agent"
-  (loop for fd in (agent-feature-detectors agent) do 
+(defun discriminate-channels (channels topic object)
+  "Discrimination attempt on all the given feature detectors (channels)"
+  (loop for fd in channels do 
        (discriminate-values (sensory-channel-discrimination-tree fd) topic object (sensory-channel-feature-name fd))))
 
 ;; Function in charge of making a discrimination between the objects of a scene
-;; using the feature detectors of the agent
-(defun run-discrimination(agent scene)
+;; using the feature detectors (channels) of the agent
+(defun run-discrimination(channels scene)
   (let ((res '()))
     (loop for obj in (scene-objects scene) do
          (loop for gc in *game-channels* do
-              (let ((disc (agent-discriminate agent (get-input-object-value (scene-topic scene) gc) (get-input-object-value obj gc))))
+              (let ((disc (discriminate-channels channels (get-input-object-value (scene-topic scene) gc) (get-input-object-value obj gc))))
                 (when (not (eq disc nil))
                   (setq res (append res (list disc)))))))
     res))
 
+;; Function in charge of 
 (defun reward-discrimination-trees(trees)
   (let ((tr (nth (random (length trees) (make-random-state t)) trees)))
     (loop for tree in trees do
@@ -318,13 +320,30 @@ If a channel has not been initialized (expanded for the first time) priority is 
     (setf (node-data-score (tree-node-data tree)) (+ (node-data-score (tree-node-data tree)) 1))
     (setf (node-data-game-number (tree-node-data tree)) *current-game*)))
 
+;; Based on the scene and the feature-detectors provided, 
+;; filters the list of feature-detectors based on the scene and an existing saliency treshold
+;; Def: Saliency is the smallest of the absolute values
+;; of the distance between the topic and any other object
+(defun salient-feature-detectors(feature-detectors scene)
+  "Saliency filter for feature detectors given a treshold"
+  (let((filtered-fds '()))
+    (loop for fd in feature-detectors do
+         (let ((abs-distances '()) (topic-value (get-input-object-value (scene-topic scene) (sensory-channel-feature-name fd))))
+           (loop for o in (scene-objects scene) do
+                (let ((obj-value (get-input-object-value o (sensory-channel-feature-name fd))))
+                  (setq abs-distances (append abs-distances (list (abs (- topic-value obj-value)))))))
+           (when (> (apply 'min abs-distances) *saliency-treshold*)
+             (append filetered-fds (list fd)))))
+    (filtered-fds)))
+
 ;; ****** Add saliency and context-scaling
 ;; Function to run a single discrimination game
 (defun run-single-game(agent)
-  (let* ((scene (create-scene)) (discrimination-results (run-discrimination agent scene)))
-    ((if (eq discrimination-results nil)
-         (expand-channel (agent-feature-detectors agent))
-         (reward-discrimination-trees discrimination-results))))
+  (let* ((scene (create-scene)) (discrimination-results '()) (feature-detectors (salient-feature-detectors (agent-feature-detectors agent) scene)))
+    (setq discrimination-results (run-discrimination feature-detectors scene))
+    (if (eq discrimination-results nil)
+        (expand-channel (agent-feature-detectors agent))
+        (reward-discrimination-trees discrimination-results))))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
