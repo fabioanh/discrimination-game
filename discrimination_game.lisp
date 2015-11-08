@@ -158,6 +158,13 @@ the real numbers corresponding to the string values"
 of the structure for the given input object"
   (funcall (symbol-function (find-symbol (string-upcase (concatenate 'string "input-object-" slot-name)))) input-object))
 
+;; Functional setter for a property of a given input object
+(defun set-input-object-value (input-object value slot-name)
+  "Given a string for the slot name sets the value using the slot-value function 
+of the structure for the given input object"
+  (setf (slot-value input-object (find-symbol (string-upcase slot-name))) value))
+
+
 ;; Gets a list with the contents of the object and returns an input-object based on it.
 (defun input-object-from-list(list-args)
   (let ((input-obj (make-input-object  :x (nth 0 list-args) :y (nth 1 list-args) :z (nth 2 list-args) :width (nth 3 list-args) :height (nth 4 list-args) :avg-y (nth 5 list-args) :avg-u (nth 6 list-args) :avg-v (nth 7 list-args) :min-y (nth 8 list-args) :min-u (nth 9 list-args) :min-v (nth 10 list-args) :max-y (nth 11 list-args) :max-u (nth 12 list-args) :max-v (nth 13 list-args) :stdv-y (nth 14 list-args) :stdv-u (nth 15 list-args) :stdv-v (nth 16 list-args))))
@@ -213,15 +220,33 @@ list of lines as strings."
          (setq channels (append channels (list (make-sensory-channel :feature-name c :discrimination-tree (get-root))))))
     channels))
 
+;; List the values for a specific property in a set of input objects
+(defun get-property-values (objects feature-name)
+  "List the values for a specific property in a set of input objects"
+  (loop for o in objects
+     collect (get-input-object-value o feature-name)))
+
+;; Function to scale a list of input objects based on the scalable features
+(defun scale-objects (objects)
+  "Scale the scalable features for the given list of objects"
+  (loop for sf in *scalable-features* do
+       (let ((max-feature-value (apply 'max (get-property-values objects sf))))
+         (loop for o in objects do
+              (set-input-object-value o (/ (get-input-object-value o sf) max-feature-value) sf))))
+  objects)
+
 ;; Function to create a scene using the random objects. The topic is removed from the
 ;; list of objects in the scene to avoid redundant comparisons.
-(defun create-scene()
+(defun create-scene(&optional scale)
   "creates a scene for the game"
-  (let* ((objs (get-random-scene-objects)) 
-         (tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs)) 
-         (scene (make-scene :objects (remove tpc objs) :topic tpc)))
+  (let* ((objs '()) (tpc nil) (scene nil))
+    (if (not (eq scale nil))
+        (setf objs (scale-objects (get-random-scene-objects)))
+        (setf objs (get-random-scene-objects)))
+    (setf tpc (nth (random *number-of-objects-per-scene* (make-random-state t)) objs))
+    (setf scene (make-scene :objects (remove tpc objs) :topic tpc))
     scene
-    ))
+  ))
 
 ;; Gets the lower bound of a node, basic wrapper for slot accessor
 (defun get-lower-bound(node)
@@ -290,27 +315,41 @@ If a channel has not been initialized (expanded for the first time) priority is 
       (setq res (discriminate-values (tree-node-right-child node) object-value topic-value feature-name))))
   res)
 
-;; loops over the feature detectors (channels) of the agent
-;; to try to discriminate the two objects in each of them
-(defun discriminate-channels (channels topic object)
-  "Discrimination attempt on all the given feature detectors (channels)"
-  (loop for fd in channels do 
-       (discriminate-values (sensory-channel-discrimination-tree fd) topic object (sensory-channel-feature-name fd))))
+;; Gets the discrimination tree that belongs to a channel in the given list
+;; corresponding with the given name
+(defun get-node-channel-by-name (channels name)
+  "Returns a discrimination tree for the channel with the given name
+in the given list"
+  (loop for c in channels do
+       (when (String= name (sensory-channel-feature-name c))
+         (return-from get-node-channel-by-name (sensory-channel-discrimination-tree c)))))
+
+;; List the channel names for a given list of channels
+(defun get-channel-names (channels)
+  "Returns the feature names for a given list of channels"
+  (loop for c in channels
+       collect (sensory-channel-feature-name c)))
 
 ;; Function in charge of making a discrimination between the objects of a scene
 ;; using the feature detectors (channels) of the agent
 (defun run-discrimination(channels scene)
   (let ((res '()))
     (loop for obj in (scene-objects scene) do
-         (loop for gc in *game-channels* do
-              (let ((disc (discriminate-channels channels (get-input-object-value (scene-topic scene) gc) (get-input-object-value obj gc))))
+         (loop for gc in (get-channel-names channels) do
+              (let ((disc (discriminate-values (get-node-channel-by-name channels gc) (get-input-object-value (scene-topic scene) gc) (get-input-object-value obj gc) gc)))
                 (when (not (eq disc nil))
                   (setq res (append res (list disc)))))))
     res))
 
-;; Function in charge of 
-(defun reward-discrimination-trees(trees)
-  (let ((tr (nth (random (length trees) (make-random-state t)) trees)))
+;; Given a list of discrimination results gives back their discrimination trees
+(defun get-trees-from-discrimination-results(disc-results)
+  "Returns the discrimination trees from a given list of discrimination results"
+  (loop for dr in disc-results
+       collect (discrimination-result-discrimination-node dr)))
+
+;; Function in charge of rewarding a successfull discrimination node
+(defun reward-discrimination-trees(discrimination-results)
+  (let* ( (trees (get-trees-from-discrimination-results discrimination-results)) (tr (nth (random (length trees) (make-random-state t)) trees)))
     (loop for tree in trees do
          (when(> (node-data-score (tree-node-data tree)) (node-data-score (tree-node-data tr)))
            (setq tr tree)))
@@ -381,9 +420,10 @@ If a channel has not been initialized (expanded for the first time) priority is 
 
 (defun tree-pruning(tree)
   "Pruning depending on the age and score of the nodes"
-  (let ((ls '()) (score (node-score tree)) (age (node-age tree)))
+  (let ((score (node-score tree)) (age (node-age tree)))
     (if(and (> age *pruning-min-age*) (< (/ score age) *pruning-treshold*))
        (progn 
+        ;; (format t "EXECUTING PRUNING")
          (setf (tree-node-left-child tree) nil)
          (setf (tree-node-right-child tree) nil))
        (when (and 
@@ -393,9 +433,6 @@ If a channel has not been initialized (expanded for the first time) priority is 
            (tree-pruning (tree-node-left-child tree))
            (tree-pruning (tree-node-right-child tree)))))))
 
-(defun test-tree ()
-  (random-expand (random-expand (random-expand (random-expand (random-expand (random-expand (get-root))))))))
-
 ;; Pruning function for a list of channels
 (defun feature-detectors-pruning(feature-detectors)
   "pruning for the feature-detectors (channels) of the agent"
@@ -404,30 +441,102 @@ If a channel has not been initialized (expanded for the first time) priority is 
   feature-detectors)
 
 ;; Function to run a single discrimination game
-(defun run-single-game(agent)
-  (let* ((scene (create-scene)) (discrimination-results '()) (feature-detectors (salient-feature-detectors (agent-feature-detectors agent) scene)))
+(defun run-single-game(agent &optional print)
+  (let* ((scene (create-scene *scaling*)) (discrimination-results '()) (feature-detectors (salient-feature-detectors (agent-feature-detectors agent) scene)))
+    (when (eq print t)
+      (progn
+        (print-channels-ranges (agent-feature-detectors agent))
+        (print-scene scene)))
     (setq discrimination-results (run-discrimination feature-detectors scene))
     (if (eq discrimination-results nil)
-        (expand-channel (agent-feature-detectors agent))
-        (reward-discrimination-trees discrimination-results))
+        (progn
+          (format t "FAIL!~C" #\linefeed)
+          ;;(print (agent-feature-detectors agent))
+          (expand-channel (agent-feature-detectors agent)))
+        (progn
+          (format t "SUCCESS!~C" #\linefeed)
+          ;; (print (agent-feature-detectors agent))
+          (reward-discrimination-trees discrimination-results)))
     (feature-detectors-pruning (agent-feature-detectors agent))))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
   (let ((agent (make-agent)) (*current-game* 1))
-    (loop for i from 0 to *total-number-of-games* do
-         (progn 
-           (run-single-game agent)
-           (setf *current-game* (+ *current-game* 1))))))
+    (loop for i from 0 below *total-number-of-games* do
+         (progn
+           (if(not (eq (find i *spy-loops*) nil))
+              (progn
+                (format t "spying game number: ~s " *current-game*)
+                (run-single-game agent t))
+              (run-single-game agent))
+           (setf *current-game* (+ *current-game* 1))))
+    ;;(print-channels-ranges (agent-feature-detectors agent) "x")
+    ))
 
 ;; Definition of game parameters
 (defparameter *number-of-objects-per-scene* 5)
-(defparameter *total-number-of-games* 500)
+(defparameter *total-number-of-games* 400)
 ;;(defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "stdv-y" "min-y" "max-y" "avg-u" "stdv-u" "min-u" "max-u" "avg-v" "stdv-v" "min-v" "max-v"))
-(defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "avg-u" "avg-v"))
+(defparameter *game-channels* '("x" "y" "width" "height" "avg-y" "avg-u" "avg-v"))
+;;(defparameter *game-channels* '(x y z width height avg-y avg-u avg-v))
 (defparameter *current-game* 0)
-(defparameter *saliency-treshold* 0.12)
-(defparameter *pruning-treshold* 0.15)
-(defparameter *pruning-min-age* 10)
+(defparameter *saliency-treshold* 0.05)
+(defparameter *pruning-treshold* 0.0001)
+(defparameter *pruning-min-age* 40)
+(defparameter *spy-loops* '(499))
+(defparameter *scalable-features* '("x" "y" "z" "width" "height"))
+(defparameter *scaling* nil)
+
 
 (exec-game)
+
+;; *********** Debugging Functions ***********
+(defun print-tree-ranges(tree)
+  (format t "(")
+  (format t "[")
+  (format t (write-to-string (node-data-lower-bound (tree-node-data tree))))
+  (format t ",")
+  (format t (write-to-string (node-data-upper-bound (tree-node-data tree))))
+  (format t "]")
+  (when (and 
+              (not (eq (tree-node-left-child tree) nil)) 
+              (not (eq (tree-node-right-child tree) nil)))
+    (progn
+      (print-tree-ranges (tree-node-left-child tree))
+      (print-tree-ranges (tree-node-right-child tree))
+  ))
+  (format t ")"))
+
+(defun print-channel-ranges(channel)
+  (format t "Feature: ~s " (sensory-channel-feature-name channel))
+  (print-tree-ranges (sensory-channel-discrimination-tree channel)))
+
+(defun print-channels-ranges(channels &optional channel-name)
+  (loop for c in channels do 
+       (if(not (eq channel-name nil))
+          (when(String= channel-name (sensory-channel-feature-name c))
+            (print-channel-ranges c))
+          (print-channel-ranges c))))
+
+(defun print-scene(scene &optional feature-name)
+  (format t "Topic: ")
+  (print-input-object (scene-topic scene) feature-name)
+  (loop for obj in (scene-objects scene) do
+       (progn
+         (format t "Object: ")
+         (print-input-object obj feature-name))))
+
+(defun print-input-object (io &optional feature-name)
+  (loop for gc in *game-channels* do
+       (progn
+         (if(not (eq feature-name nil))
+            (when (String= gc feature-name)
+              (format t "~s: ~s " gc (get-input-object-value io gc)))
+            (format t "~s: ~s " gc (get-input-object-value io gc))))))
+
+(print-scene (create-scene) "x")
+
+;;****************************************************************
+
+(defun test-tree ()
+  (random-expand (random-expand (random-expand (random-expand (random-expand (random-expand (get-root))))))))
