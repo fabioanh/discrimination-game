@@ -110,7 +110,6 @@ stopped."
 ;; Definition of the binary-tree node structure
 (defstruct tree-node
   (data)
-  (parent)
   (left-child)
   (right-child))
 
@@ -205,13 +204,6 @@ list of lines as strings."
 ;; Function to get the root of a tree
 (defun get-root()
   (make-tree-node :data (make-node-data :score 0.0 :game-number 0 :lower-bound 0.0 :upper-bound 1.0)))
-
-;; Gets the root of the tree for the current node based on its ancestors
-;; Incorrect function. Doesn't work :(
-(defun find-root(node)
-  (if(eq (tree-node-parent node) nil)
-     node
-     (find-root (tree-node-parent node))))
 
 ;; Function to initialize the sensory channels for the agent
 (defun init-sensory-channels()
@@ -356,18 +348,18 @@ in the given list"
     (setf (node-data-score (tree-node-data tr)) (+ (node-data-score (tree-node-data tr)) 1))))
 
 ;; Based on the scene and the feature-detectors provided, 
-;; filters the list of feature-detectors based on the scene and an existing saliency treshold
+;; filters the list of feature-detectors based on the scene and an existing saliency threshold
 ;; Def: Saliency is the smallest of the absolute values
 ;; of the distance between the topic and any other object
 (defun salient-feature-detectors(feature-detectors scene)
-  "Saliency filter for feature detectors given a treshold"
+  "Saliency filter for feature detectors given a threshold"
   (let ((filtered-fds '()))
     (loop for fd in feature-detectors do
          (let ((abs-distances '()) (topic-value (get-input-object-value (scene-topic scene) (sensory-channel-feature-name fd))))
            (loop for o in (scene-objects scene) do
                 (let ((obj-value (get-input-object-value o (sensory-channel-feature-name fd))))
                   (setq abs-distances (append abs-distances (list (abs (- topic-value obj-value)))))))
-           (when (> (apply 'min abs-distances) *saliency-treshold*)
+           (when (> (apply 'min abs-distances) *saliency-threshold*)
              (setq filtered-fds (append filtered-fds (list fd))))))
     filtered-fds))
 
@@ -418,12 +410,14 @@ in the given list"
   "Gets the age of a node"
   (- *current-game* (node-birth-game node)))
 
+;; Executes a prunning in a tree
+;; Function doesn't work properly
 (defun tree-pruning(tree)
   "Pruning depending on the age and score of the nodes"
   (let ((score (node-score tree)) (age (node-age tree)))
-    (if(and (> age *pruning-min-age*) (< (/ score age) *pruning-treshold*))
+    (if(and (> age *pruning-min-age*) (< (/ score age) *pruning-threshold*))
        (progn 
-        ;; (format t "EXECUTING PRUNING")
+        ;;(format t "EXECUTING PRUNING")
          (setf (tree-node-left-child tree) nil)
          (setf (tree-node-right-child tree) nil))
        (when (and 
@@ -438,7 +432,42 @@ in the given list"
   "pruning for the feature-detectors (channels) of the agent"
   (loop for fd in feature-detectors do
        (tree-pruning (sensory-channel-discrimination-tree fd)))
+  ;;(print-agent-feature-detectors-size feature-detectors)
   feature-detectors)
+
+;; Recursive computation of the size of a tree
+(defun tree-size(tree)
+  "Returns the size of a tree based on its sub nodes"
+  (let ((size 1))
+    (when(and (eq (tree-node-left-child tree) nil) (eq (tree-node-right-child tree)nil))
+      (return-from tree-size 1))
+    (setq size (+ size (tree-size (tree-node-left-child tree))))
+    (setq size (+ size (tree-size (tree-node-right-child tree))))
+    size))
+
+(defun print-agent-feature-detectors-size(feature-detectors)
+  (when (> *verbose-level* 1)
+    (loop for fd in feature-detectors do
+         (format t "Feature ~s size: ~d. " (sensory-channel-feature-name fd) (tree-size (sensory-channel-discrimination-tree fd))))
+    (format t "~C" #\linefeed))
+  (when (> *verbose-level* 0)
+    (let ((size 0))
+      (loop for fd in feature-detectors do
+           (setq size (+ size (tree-size (sensory-channel-discrimination-tree fd)))))
+      (format t "Total size of trees: ~d ~C" size #\linefeed)))
+  )
+
+;;Prints a running average
+(defun print-discriminatory-success()
+  (when (> *verbose-level* 0)
+    (let ((span (floor (+ *moving-avg-span* (* *moving-avg-increase-rate* *current-game*)))) (avg 0))
+      (when (< (- *current-game* 1) span)
+        (setq span (- *current-game* 1)))
+      (loop for i from 0 below span do
+           (setq avg (+ avg (aref *success-log* (- (- *current-game* 1) i)))))
+      (setq avg (* (/ avg span) 100.0))
+      ;;(format t "~s ~C" *success-log* #\linefeed)
+      (format t "Success rate: ~d % ~C" avg #\linefeed))))
 
 ;; Function to run a single discrimination game
 (defun run-single-game(agent &optional print)
@@ -450,18 +479,20 @@ in the given list"
     (setq discrimination-results (run-discrimination feature-detectors scene))
     (if (eq discrimination-results nil)
         (progn
-          (format t "FAIL!~C" #\linefeed)
+          (setf (aref *success-log* (- *current-game* 1)) 0)
+          ;;(format t "FAIL!~C" #\linefeed)
           ;;(print (agent-feature-detectors agent))
           (expand-channel (agent-feature-detectors agent)))
         (progn
-          (format t "SUCCESS!~C" #\linefeed)
-          ;; (print (agent-feature-detectors agent))
+          (setf (aref *success-log* (- *current-game* 1)) 1)
+          ;;(format t "SUCCESS!~C" #\linefeed)
+          ;;(print (agent-feature-detectors agent))
           (reward-discrimination-trees discrimination-results)))
     (feature-detectors-pruning (agent-feature-detectors agent))))
 
 ;; Definition of the game. Main function to run.
 (defun exec-game()
-  (let ((agent (make-agent)) (*current-game* 1))
+  (let ((agent (make-agent)) (*current-game* 1) (*success-log* (make-array (+ *total-number-of-games* 1))))
     (loop for i from 0 below *total-number-of-games* do
          (progn
            (if(not (eq (find i *spy-loops*) nil))
@@ -469,26 +500,11 @@ in the given list"
                 (format t "spying game number: ~s " *current-game*)
                 (run-single-game agent t))
               (run-single-game agent))
-           (setf *current-game* (+ *current-game* 1))))
-    ;;(print-channels-ranges (agent-feature-detectors agent) "x")
-    ))
-
-;; Definition of game parameters
-(defparameter *number-of-objects-per-scene* 5)
-(defparameter *total-number-of-games* 400)
-;;(defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "stdv-y" "min-y" "max-y" "avg-u" "stdv-u" "min-u" "max-u" "avg-v" "stdv-v" "min-v" "max-v"))
-(defparameter *game-channels* '("x" "y" "width" "height" "avg-y" "avg-u" "avg-v"))
-;;(defparameter *game-channels* '(x y z width height avg-y avg-u avg-v))
-(defparameter *current-game* 0)
-(defparameter *saliency-treshold* 0.05)
-(defparameter *pruning-treshold* 0.0001)
-(defparameter *pruning-min-age* 40)
-(defparameter *spy-loops* '(499))
-(defparameter *scalable-features* '("x" "y" "z" "width" "height"))
-(defparameter *scaling* nil)
-
-
-(exec-game)
+           (setf *current-game* (+ *current-game* 1))
+           (print-agent-feature-detectors-size (agent-feature-detectors agent))
+           (print-discriminatory-success)))
+    (when (> *verbose-level* 1)
+      (print-channels-ranges (agent-feature-detectors agent)))))
 
 ;; *********** Debugging Functions ***********
 (defun print-tree-ranges(tree)
@@ -540,3 +556,32 @@ in the given list"
 
 (defun test-tree ()
   (random-expand (random-expand (random-expand (random-expand (random-expand (random-expand (get-root))))))))
+
+
+;;(defparameter *game-channels* '("x" "y" "z" "width" "height" "avg-y" "stdv-y" "min-y" "max-y" "avg-u" "stdv-u" "min-u" "max-u" "avg-v" "stdv-v" "min-v" "max-v"))
+
+;;****************************************************************
+
+;; In order to run some games just replace the parameters below
+;; and run the method exec-game. The common parameters to play with
+;; are the ones found at the bottom.
+
+;; Definition of game parameters
+(defparameter *current-game* 0)
+(defparameter *spy-loops* '())
+(defparameter *scalable-features* '("x" "y" "z" "width" "height"))
+(defparameter *moving-avg-span* 4)
+(defparameter *success-log* (make-array *total-number-of-games*))
+(defparameter *moving-avg-increase-rate* 0.1)
+(defparameter *verbose-level* 1)
+;; Common parameters
+(defparameter *number-of-objects-per-scene* 5)
+(defparameter *total-number-of-games* 500)
+(defparameter *saliency-threshold* 0.01)
+(defparameter *pruning-threshold* 0.9)
+(defparameter *pruning-min-age* 20)
+(defparameter *scaling* t)
+(defparameter *game-channels* '("x" "y" "width" "height" "avg-y" "avg-u" "avg-v"))
+
+
+(exec-game)
