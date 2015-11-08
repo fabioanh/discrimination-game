@@ -180,9 +180,6 @@ list of lines as strings."
          do(setq result (append result (list (input-object-from-list (line-to-numbers line)))))))
     result))
 
-;; Definition of variable to hold the list of objects that represent the input.
-(defparameter *input* (read-file "~/Documents/vub/programming_paradigms/dev/lisp_code/assignment_1/assignment-1-data/qrio-1/object-features.txt"))
-
 ;; Get random object from situation data
 (defparameter *number-of-situation-objects* 1643)
 (defun get-random-situation-object()
@@ -574,6 +571,10 @@ in the given list"
 (defparameter *success-log* (make-array *total-number-of-games*))
 (defparameter *moving-avg-increase-rate* 0.1)
 (defparameter *verbose-level* 1)
+
+;; Definition of variable to hold the list of objects that represent the input. *_*_*IMPORTANT!*_*_* => CHANGE TO LOCAL ONE!!
+(defparameter *input* (read-file "~/Documents/vub/programming_paradigms/dev/lisp_code/assignment_1/assignment-1-data/qrio-1/object-features.txt"))
+
 ;; Common parameters
 (defparameter *number-of-objects-per-scene* 5)
 (defparameter *total-number-of-games* 500)
